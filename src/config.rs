@@ -13,6 +13,7 @@ pub struct Instruction {
 pub struct Config {
     pub id: String,
     pub verify_key: String,
+    pub admin_id: String,
     pub db_url: String,
     pub worker_amount: usize,
     pub instructions: Vec<Instruction>,

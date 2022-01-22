@@ -4,15 +4,17 @@ use strfmt::strfmt;
 use std::collections::HashMap;
 
 pub struct Command {
+    public: bool,
     params: Vec<String>,
     content: String,
 }
 
 impl Command {
-    pub fn new(params: &Vec<String>, content: &String) -> Command {
+    pub fn new(params: Vec<String>, content: String, is_public: bool) -> Command {
         Command {
-            params: params.clone(),
-            content: content.clone(),
+            public: is_public,
+            params: params,
+            content: content,
         }
     }
 
@@ -32,6 +34,10 @@ impl Command {
             Err(_) => Err(()),
         }
     }
+
+    pub fn is_public(&self) -> bool {
+        self.public
+    }
 }
 
 #[cfg(test)]
@@ -41,7 +47,7 @@ mod test {
         let params = vec!["test1".to_string(),"test2".to_string()];
         let content = "SELECT {test1}, {test2} FROM testtable".to_string();
 
-        let command = super::Command::new(&params, &content);
+        let command = super::Command::new(params, content, true);
 
         match command.get(vec!["age".to_string(),"sex".to_string()]) {
             Ok(s) => println!("COMMAND: {}",s),

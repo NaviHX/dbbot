@@ -95,16 +95,25 @@ impl Bot {
             // 分发消息
             match self.check_permission(command, &id) {
                 true => {
+                    let db_operation_result = command.get(args);
                     self.workers.execute(move || {
-                        eprintln!("RECV A NEW MESSAGE");
-                        // process request and send reply
+                        eprintln!("RECV A NEW REQUEST");
+                        let tmp;
+                        match db_operation_result {
+                            Ok(op) => {
+                                tmp = format!("{}: {}",id,op);
+                                send_message("932942142", &tmp);
+                            }
+                            Err(_) => {
+                                send_message(&id, "WRONG FORMAT");
+                            }
+                        }
                         eprintln!("Reply Sent");
                     });
                 }
                 false => {
                     self.workers.execute(move || {
-                        eprintln!("RECV An Error MESSAGE");
-                        // send_message(dst_id: &str, msg: &str)
+                        send_message(&id, "NO PERMISSION");
                     });
                 }
             }
@@ -126,7 +135,12 @@ impl Bot {
     }
 
     fn check_permission(&self, command: &Command, id: &str) -> bool {
-        false
+        if command.is_public() && id != self.admin_id {
+            false
+        }
+        else {
+            true
+        }
     }
 
     fn parse_command(

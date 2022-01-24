@@ -14,13 +14,18 @@ use command::Command;
 type Websocket = tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>;
 
 pub struct Bot {
-    id: String,
-    verify_key: String,
+    // id: String,
+    // verify_key: String,
     admin_id: String,
     workers: WorkerPool,
     // db_connection_pool: Pool,
     mirai_connection: Websocket,
     commands: HashMap<String, Command>,
+}
+
+enum CommandErr {
+    ParseError,
+    CommandNotFound(String),
 }
 
 impl Bot {
@@ -44,8 +49,8 @@ impl Bot {
         }
 
         Bot {
-            id: cfg.id,
-            verify_key: cfg.verify_key,
+            // id: cfg.id,
+            // verify_key: cfg.verify_key,
             admin_id: cfg.admin_id,
             workers: WorkerPool::new(cfg.worker_amount),
             // db_connection_pool: Pool::new(mysql::Opts::from_url(&cfg.dbUrl).unwrap()).unwrap(),
@@ -74,7 +79,7 @@ impl Bot {
             let msg: Value = match serde_json::from_str(&msg) {
                 Ok(v) => v,
                 Err(_) => {
-                    eprintln!("parse error");
+                    eprintln!("Parse error");
                     continue;
                 }
             };
@@ -86,8 +91,11 @@ impl Bot {
 
             let (command, id, args) = match self.parse_command(&msg) {
                 Ok((c, id, a)) => (c, id, a),
-                Err(_) => {
-                    eprintln!("Parse Error");
+                Err(ce) => {
+                    match ce {
+                        CommandErr::CommandNotFound(id) => send_message(&id, "WRONG OPERATION"),
+                        CommandErr::ParseError => eprintln!("Parse error"),
+                    };
                     continue;
                 }
             };
@@ -101,7 +109,7 @@ impl Bot {
                         let tmp;
                         match db_operation_result {
                             Ok(op) => {
-                                tmp = format!("{}: {}",id,op);
+                                tmp = format!("{}: {}", id, op);
                                 send_message("932942142", &tmp);
                             }
                             Err(_) => {
@@ -137,8 +145,7 @@ impl Bot {
     fn check_permission(&self, command: &Command, id: &str) -> bool {
         if command.is_public() && id != self.admin_id {
             false
-        }
-        else {
+        } else {
             true
         }
     }
@@ -146,26 +153,33 @@ impl Bot {
     fn parse_command(
         &self,
         msg: &serde_json::Value,
-    ) -> std::result::Result<(&Command, String, Vec<String>), ()> {
-        let content: String = match msg["data"]["messageChain"].get(1) {
-            Some(s) => s.to_string(),
-            None => return Err(()),
-        };
-        let mut content = content.split(" ");
-        let first = match content.next() {
-            Some(s) => s,
-            None => return Err(()),
+    ) -> std::result::Result<(&Command, String, Vec<String>), CommandErr> {
+        let content: &Value = match msg["data"]["messageChain"].get(1) {
+            Some(v) => v,
+            None => return Err(CommandErr::ParseError),
         };
 
-        match self.commands.get(first) {
+        let content: String = content["text"].to_string();
+        let mut content = content.split(" ");
+        let id = msg["data"]["sender"]["id"]
+            .to_string()
+            .trim_matches('"')
+            .to_string();
+
+        let first = match content.next() {
+            Some(s) => s.to_string(),
+            None => return Err(CommandErr::ParseError),
+        };
+
+        match self.commands.get(first.trim_matches('"')) {
             Some(c) => {
                 let mut args = Vec::new();
                 for s in content {
-                    args.push(s.to_string());
+                    args.push(s.trim_matches('"').to_string());
                 }
-                Ok((c, msg["data"]["Sender"]["id"].to_string(), args))
+                Ok((c, id, args))
             }
-            None => Err(()),
+            None => Err(CommandErr::CommandNotFound(id)),
         }
     }
 }

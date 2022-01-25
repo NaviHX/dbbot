@@ -23,10 +23,12 @@ pub struct Bot {
     db_connection_pool: Pool,
     mirai_connection: Websocket,
     commands: HashMap<String, Command>,
+    help_info: String,
 }
 
 enum CommandErr {
     ParseError,
+    Help(String),
     CommandNotFound(String),
 }
 
@@ -39,15 +41,21 @@ impl Bot {
         let (ws, _) = connect(Url::parse(&ws).unwrap()).unwrap();
 
         let mut commands = HashMap::new();
+        let mut help_info = String::new();
         for instruction in cfg.instructions {
             commands.insert(
-                instruction.command,
+                instruction.command.clone(),
                 Command::new(
-                    instruction.params,
-                    instruction.content,
+                    instruction.params.clone(),
+                    instruction.content.clone(),
                     instruction.is_public,
                 ),
             );
+            help_info.push_str(&format!("{}",instruction.command));
+            for p in instruction.params {
+                help_info.push_str(&format!(" {{{}}}",p));
+            }
+            help_info.push_str(&format!(": {}\n",instruction.description));
         }
 
         Bot {
@@ -58,6 +66,7 @@ impl Bot {
             db_connection_pool: Pool::new(mysql::Opts::from_url(&cfg.db_url).unwrap()).unwrap(),
             mirai_connection: ws,
             commands,
+            help_info,
         }
     }
 
@@ -97,6 +106,12 @@ impl Bot {
                     match ce {
                         CommandErr::CommandNotFound(id) => send_message(&id, "WRONG OPERATION"),
                         CommandErr::ParseError => eprintln!("Parse error"),
+                        CommandErr::Help(id) => {
+                            let help = self.help_info.clone();
+                            self.workers.execute(move || {
+                                send_message(&id, &help);
+                            });
+                        }
                     };
                     continue;
                 }
@@ -180,6 +195,11 @@ impl Bot {
             Some(s) => s.to_string(),
             None => return Err(CommandErr::ParseError),
         };
+
+        if first == "help" {
+            return Err(CommandErr::Help(id));
+        }
+
 
         match self.commands.get(&first) {
             Some(c) => {

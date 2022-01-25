@@ -7,6 +7,7 @@ pub struct Instruction {
     pub is_public: bool,
     pub params: Vec<String>,
     pub content: String,
+    pub description: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

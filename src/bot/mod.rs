@@ -1,8 +1,10 @@
 use crate::workerpool::WorkerPool;
 mod command;
 
-// use mysql::Pool;
-// use mysql::*;
+use mysql::Pool;
+use mysql::*;
+use mysql::prelude::*;
+use serde_json::json;
 use serde_json::Value;
 use std::collections::HashMap;
 use tungstenite::connect;
@@ -18,7 +20,7 @@ pub struct Bot {
     // verify_key: String,
     admin_id: String,
     workers: WorkerPool,
-    // db_connection_pool: Pool,
+    db_connection_pool: Pool,
     mirai_connection: Websocket,
     commands: HashMap<String, Command>,
 }
@@ -53,7 +55,7 @@ impl Bot {
             // verify_key: cfg.verify_key,
             admin_id: cfg.admin_id,
             workers: WorkerPool::new(cfg.worker_amount),
-            // db_connection_pool: Pool::new(mysql::Opts::from_url(&cfg.dbUrl).unwrap()).unwrap(),
+            db_connection_pool: Pool::new(mysql::Opts::from_url(&cfg.db_url).unwrap()).unwrap(),
             mirai_connection: ws,
             commands,
         }
@@ -101,16 +103,20 @@ impl Bot {
             };
 
             // 分发消息
+            let pool = self.db_connection_pool.clone();
             match self.check_permission(command, &id) {
                 true => {
-                    let db_operation_result = command.get(args);
+                    let db_operation_result = command.get(args, id.clone());
                     self.workers.execute(move || {
                         eprintln!("RECV A NEW REQUEST");
-                        let tmp;
                         match db_operation_result {
                             Ok(op) => {
-                                tmp = format!("{}: {}", id, op);
-                                send_message("932942142", &tmp);
+                                eprintln!("PROCESS {}: {}",id,op);
+                                match process_db_query(pool, &op) {
+                                    Ok(_) => send_message(&id, "OK"),
+                                    Err(DbError::ConnectError) => send_message(&id, "DB CONNECTION FAIL"),
+                                    Err(DbError::ProcessError) => send_message(&id, "QUERY PROCESS FAIL"),
+                                }
                             }
                             Err(_) => {
                                 send_message(&id, "WRONG FORMAT");
@@ -159,7 +165,11 @@ impl Bot {
             None => return Err(CommandErr::ParseError),
         };
 
-        let content: String = content["text"].to_string();
+        let content: String = match content["text"].as_str() {
+            Some(s) => s.to_string(),
+            None => "".to_string(),
+        };
+
         let mut content = content.split(" ");
         let id = msg["data"]["sender"]["id"]
             .to_string()
@@ -171,12 +181,13 @@ impl Bot {
             None => return Err(CommandErr::ParseError),
         };
 
-        match self.commands.get(first.trim_matches('"')) {
+        match self.commands.get(&first) {
             Some(c) => {
                 let mut args = Vec::new();
                 for s in content {
-                    args.push(s.trim_matches('"').to_string());
+                    args.push(s.to_string());
                 }
+                // args.push(id.clone());
                 Ok((c, id, args))
             }
             None => Err(CommandErr::CommandNotFound(id)),
@@ -186,17 +197,45 @@ impl Bot {
 
 fn send_message(dst_id: &str, msg: &str) {
     let client = reqwest::blocking::Client::new();
-    let body = format!(
-        r#"{{ "sessionKey":"", "target":{}, "messageChain":[ {{ "type":"Plain", "text":"{}"}} ] }}"#,
-        dst_id, msg
-    );
+    // let body = format!(
+    // r#"{{ "sessionKey":"", "target":{}, "messageChain":[ {{ "type":"Plain", "text":"{}"}} ] }}"#,
+    // dst_id, msg
+    // );
+    let body = json!({
+        "sessionKey": "",
+        "target": dst_id,
+        "messageChain": [
+            {
+                "type": "Plain",
+                "text": msg
+            }
+        ]
+    });
+    eprintln!("SEND: {}", body.to_string());
 
     match client
         .post("http://127.0.0.1:8080/sendFriendMessage")
-        .body(body)
+        .body(body.to_string())
         .send()
     {
         Ok(_) => return (),
         Err(_) => eprintln!("Response lost"),
+    }
+}
+
+enum DbError {
+    ConnectError,
+    ProcessError,
+}
+
+fn process_db_query(pool: mysql::Pool,op: &str) -> std::result::Result<(),DbError> {
+    let mut conn = match pool.get_conn() {
+        Ok(c) => c,
+        Err(_) => return Err(DbError::ConnectError),
+    };
+
+    match conn.exec_drop(op,()) {
+        Ok(_) => Ok(()),
+        Err(_) => Err(DbError::ProcessError),
     }
 }

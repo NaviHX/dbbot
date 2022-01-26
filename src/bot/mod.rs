@@ -1,9 +1,9 @@
 use crate::workerpool::WorkerPool;
 mod command;
 
+use mysql::prelude::*;
 use mysql::Pool;
 use mysql::*;
-use mysql::prelude::*;
 use serde_json::json;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -35,7 +35,7 @@ enum CommandErr {
 impl Bot {
     pub fn from_config(cfg: Config) -> Bot {
         let ws = format!(
-            "ws://localhost:8080/message?verifyKey={}&qq={}",
+            "ws://localhost:8080/all?verifyKey={}&qq={}",
             cfg.verify_key, cfg.id
         );
         let (ws, _) = connect(Url::parse(&ws).unwrap()).unwrap();
@@ -51,11 +51,11 @@ impl Bot {
                     instruction.is_public,
                 ),
             );
-            help_info.push_str(&format!("{}",instruction.command));
+            help_info.push_str(&format!("{}", instruction.command));
             for p in instruction.params {
-                help_info.push_str(&format!(" {{{}}}",p));
+                help_info.push_str(&format!(" {{{}}}", p));
             }
-            help_info.push_str(&format!(": {}\n",instruction.description));
+            help_info.push_str(&format!(": {}\n", instruction.description));
         }
 
         Bot {
@@ -126,11 +126,15 @@ impl Bot {
                         eprintln!("RECV A NEW REQUEST");
                         match db_operation_result {
                             Ok(op) => {
-                                eprintln!("PROCESS {}: {}",id,op);
+                                eprintln!("PROCESS {}: {}", id, op);
                                 match process_db_query(pool, &op) {
                                     Ok(_) => send_message(&id, "OK"),
-                                    Err(DbError::ConnectError) => send_message(&id, "DB CONNECTION FAIL"),
-                                    Err(DbError::ProcessError) => send_message(&id, "QUERY PROCESS FAIL"),
+                                    Err(DbError::ConnectError) => {
+                                        send_message(&id, "DB CONNECTION FAIL")
+                                    }
+                                    Err(DbError::ProcessError) => {
+                                        send_message(&id, "QUERY PROCESS FAIL")
+                                    }
                                 }
                             }
                             Err(_) => {
@@ -150,15 +154,25 @@ impl Bot {
     }
 
     fn filter(&self, msg: &serde_json::Value) -> bool {
-        //!过滤器
-        //!过滤不需要的信息
+        //! 过滤器
+        //! 过滤非好友信息
+        //! 自动接受好友与群请求
 
-        if msg["data"]["type"] == "FriendMessage"
-            || msg["data"]["type"] == "StrangerMessage"
-            || msg["data"]["type"] == "TempMessage"
-        {
+        if msg["data"]["type"] == "FriendMessage" {
             true
         } else {
+            if msg["data"]["type"] == "NewFriendRequestEvent" {
+                let msg=msg.clone();
+                self.workers.execute(move || {
+                    accept_friend(&msg);
+                });
+            }
+            else if msg["data"]["type"] == "BotInvitedJoinGroupRequestEvent" {
+                let msg=msg.clone();
+                self.workers.execute(move || {
+                    accept_group(&msg);
+                });
+            }
             false
         }
     }
@@ -199,7 +213,6 @@ impl Bot {
         if first == "help" {
             return Err(CommandErr::Help(id));
         }
-
 
         match self.commands.get(&first) {
             Some(c) => {
@@ -243,18 +256,64 @@ fn send_message(dst_id: &str, msg: &str) {
     }
 }
 
+fn accept_friend(msg: &serde_json::Value)
+{
+    let url = format!("http://localhost:8080/resp/newFriendRequestEvent");
+    accept_friend_or_group(&url, msg)
+}
+
+fn accept_group(msg: &serde_json::Value)
+{
+    let url = format!("http://localhost:8080/resp/botInvitedJoinGroupRequestEvent");
+    accept_friend_or_group(&url, msg)
+}
+
+fn accept_friend_or_group(url: &str, msg: &serde_json::Value) {
+    let client = reqwest::blocking::Client::new();
+
+    let event_id = match msg["data"]["eventId"].as_u64() {
+        Some(s) => s,
+        None => return (),
+    };
+    let from_id = match msg["data"]["fromId"].as_u64() {
+        Some(s) => s,
+        None => return (),
+    };
+    let group_id = match msg["data"]["groupId"].as_u64() {
+        Some(s) => s,
+        None => return (),
+    };
+
+    let body = json!({
+        "sessionKey": "",
+        "eventId": event_id,
+        "fromId": from_id,
+        "groupId": group_id,
+        "operate": 0,
+        "message": "",
+    });
+
+    match client.post(url)
+        .body(body.to_string())
+        .send()
+    {
+        Ok(_) => return (),
+        Err(_) => eprintln!("Response lost"),
+    }
+}
+
 enum DbError {
     ConnectError,
     ProcessError,
 }
 
-fn process_db_query(pool: mysql::Pool,op: &str) -> std::result::Result<(),DbError> {
+fn process_db_query(pool: mysql::Pool, op: &str) -> std::result::Result<(), DbError> {
     let mut conn = match pool.get_conn() {
         Ok(c) => c,
         Err(_) => return Err(DbError::ConnectError),
     };
 
-    match conn.exec_drop(op,()) {
+    match conn.exec_drop(op, ()) {
         Ok(_) => Ok(()),
         Err(_) => Err(DbError::ProcessError),
     }

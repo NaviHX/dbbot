@@ -1,5 +1,6 @@
+use serde::{Deserialize, Serialize};
 use std::fs;
-use serde::{Serialize, Deserialize};
+use std::path::Path;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Instruction {
@@ -22,7 +23,13 @@ pub struct Config {
 
 impl Config {
     pub fn from(path: &str) -> Config {
-        let content = fs::read_to_string(path).unwrap();
+        let content = match fs::read_to_string(Path::new(path)) {
+            Ok(s) => s,
+            Err(_) => {
+                eprintln!("Consider create {}", path);
+                panic!("Cannot read config!");
+            }
+        };
         Self::parse(&content)
     }
 
@@ -37,6 +44,6 @@ mod tests {
     #[test]
     fn it_works() {
         let res = crate::config::Config::from("config.json");
-        println!("{:#?}",res);
+        println!("{:#?}", res);
     }
 }

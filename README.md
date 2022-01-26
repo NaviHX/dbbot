@@ -54,7 +54,7 @@ cargo install --git https://github.com/NaviHX/dbbot.git
 ## 配置bot
 
 ```
-# /bot/config.json
+# config.json
 {
     "id": "your_qq",
     "verify_key": "",
@@ -92,4 +92,10 @@ cargo install --git https://github.com/NaviHX/dbbot.git
         }
     ]
 }
+```
+
+# Run
+
+```
+> mirai_db_bot <config path>
 ```

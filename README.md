@@ -46,6 +46,11 @@ adapterSettings:
 cargo build
 ```
 
+直接获取github上的版本
+```bash
+cargo install --git https://github.com/NaviHX/dbbot.git
+```
+
 ## 配置bot
 
 ```

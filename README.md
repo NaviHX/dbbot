@@ -96,6 +96,10 @@ cargo install --git https://github.com/NaviHX/dbbot.git
 
 # Run
 
+启动mcl并登录qq
+
+然后运行
+
 ```
 > mirai_db_bot <config path>
 ```
